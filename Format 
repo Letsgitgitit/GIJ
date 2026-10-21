@@ -44,3 +44,18 @@ foreach (var m in Model.Tables["_Measures"].Measures)
     }
 }
 done.ToString().Output();
+
+
+P1 Exposure Text =
+VAR expVal = [P1 Exposure Value]
+VAR absVal = ABS( expVal )
+RETURN
+    IF(
+        NOT ISBLANK( expVal ),
+        SWITCH(
+            TRUE(),
+            absVal >= 1E9, FORMAT( expVal / 1E9, "€#,0.0" ) & "bn",
+            absVal >= 1E8, FORMAT( expVal / 1E6, "€#,0" ) & "m",
+            FORMAT( expVal / 1E6, "€#,0.0" ) & "m"
+        )
+    )
