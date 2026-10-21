@@ -1,0 +1,46 @@
+EVALUATE
+SELECTCOLUMNS(
+    FILTER( INFO.MEASURES(), CONTAINSSTRING( [FormatString], ",," ) ),
+    "Measure", [Name],
+    "Format", [FormatString]
+)
+
+
+
+VAR absVal = ABS( SELECTEDMEASURE() )
+RETURN
+    SWITCH(
+        TRUE(),
+        absVal >= 1E9, "€#,0.0,,,""bn""",
+        absVal >= 1E8, "€#,0,,""m""",
+        "€#,0.0,,""m"""
+    )
+
+
+
+
+var src = Model.Tables["_Measures"].Measures["16A Util"].FormatStringExpression;
+var done = new System.Text.StringBuilder();
+foreach (var m in Model.Tables["_Measures"].Measures)
+{
+    if (m.FormatString != null && m.FormatString.Contains(",,"))
+    {
+        m.FormatStringExpression = src;
+        done.AppendLine(m.Name);
+    }
+}
+done.ToString().Output();
+
+
+
+
+var done = new System.Text.StringBuilder();
+foreach (var m in Model.Tables["_Measures"].Measures)
+{
+    if (m.FormatString != null && m.FormatString.Contains(",,"))
+    {
+        done.AppendLine(m.Name + "  (was " + m.FormatString + ")");
+        m.FormatString = "€#,0";
+    }
+}
+done.ToString().Output();
