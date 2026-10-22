@@ -1,0 +1,105 @@
+let
+    // 1. CONFIG
+    CsvFolderPath = "G:\_CCC_Data\Golden",
+    FileTag = "GOLDEN_",
+    PadKey10 = (v) as nullable text =>
+        if v = null then null
+        else
+            let
+                t = Text.From(v),
+                t2 = if Text.EndsWith(t, ".0") then Text.Start(t, Text.Length(t) - 2) else t
+            in
+                if t2 = "" then null
+                else if List.MatchesAll(Text.ToList(t2), each _ >= "0" and _ <= "9")
+                    then Text.PadStart(t2, 10, "0")
+                else t2,
+
+    // 2. CONNECT & FILTER
+    Source = Folder.Files(CsvFolderPath),
+    FilterCSV = Table.SelectRows(Source, each
+        Text.Lower([Extension]) = ".csv"
+        and not Text.StartsWith([Name], "~$")
+        and Text.StartsWith(Text.Upper([Name]), Text.Upper(FileTag))),
+
+    // 2b. FILE DATE + FILE CURRENCY from the name (A)
+    AddFileDate = Table.AddColumn(FilterCSV, "FileDateKey",
+        each Text.Middle([Name], Text.Length(FileTag), 8), type text),
+    AddCurrency = Table.AddColumn(AddFileDate, "FileCurrency",
+        each if Text.EndsWith(Text.Upper([Name]), "_EUR.CSV") then "EUR" else "USD", type text),
+
+    // 2c. GUARD: one file per date (B)
+    DupDates = Table.SelectRows(
+        Table.Group(AddCurrency, {"FileDateKey"}, {{"n", each Table.RowCount(_), Int64.Type}}),
+        each [n] > 1),
+    Checked = if Table.IsEmpty(DupDates) then AddCurrency
+        else error Error.Record("CORTEX: two files for one date", Text.Combine(DupDates[FileDateKey], ", ")),
+
+    // 3. PER-FILE read, tag rows with date key + currency (D)
+    AddData = Table.AddColumn(Checked, "Data", each
+        let
+            name = [Name],
+            key = [FileDateKey],
+            cur = [FileCurrency],
+            csv = try Csv.Document([Content],
+                      [Delimiter = ",", Encoding = 65001, QuoteStyle = QuoteStyle.Csv])
+                  otherwise error Error.Record("CORTEX: unreadable file", name),
+            promoted = Table.PromoteHeaders(csv, [PromoteAllScalars = true]),
+            tagged = Table.AddColumn(
+                         Table.AddColumn(promoted, "FileDateKey", each key, type text),
+                         "FileCurrency", each cur, type text)
+        in
+            tagged),
+    Combined = Table.Combine(AddData[Data]),
+
+    // 4. PARSE SnapshotDate (ISO yyyy-mm-dd)
+    ParseDate = Table.TransformColumns(Combined, {
+        {"SnapshotDate", each
+            let s = Text.From(_)
+            in try #date(
+                    Number.From(Text.Start(s, 4)),
+                    Number.From(Text.Middle(s, 5, 2)),
+                    Number.From(Text.End(s, 2)))
+               otherwise null,
+         type date}
+    }),
+
+    // 4b. GUARD: file date = name date, never null (C)
+    BadDates = Table.SelectRows(ParseDate, each
+        [SnapshotDate] = null
+        or Date.ToText([SnapshotDate], [Format = "yyyyMMdd", Culture = "en-US"]) <> [FileDateKey]),
+    DateChecked = if Table.IsEmpty(BadDates) then ParseDate
+        else error Error.Record("CORTEX: SnapshotDate missing or differs from the file name",
+            Text.Combine(List.Distinct(BadDates[FileDateKey]), ", ")),
+
+    // 5. KEYS TO 10-CHAR TEXT
+    PadKeys = Table.TransformColumns(DateChecked, {
+        {"CPH_Id", each PadKey10(_), type text},
+        {"HeadOfficeSirisId", each PadKey10(_), type text}
+    }),
+
+    // 6. TRIM TEXT
+    TextCols = {
+        "CPH_Name", "CPY_Name", "CPY_DND", "CPY_Rating", "CPY_Country",
+        "CPY_Category", "CPY_Sector", "CPY_RM", "CPY_Sub_Sector", "CPY_KYC"
+    },
+    TrimText = Table.TransformColumns(PadKeys,
+        List.Transform(TextCols, each
+            {_, (x) => if x = null then null else Text.Trim(Text.From(x)), type text})),
+
+    // 7. NUMBERS: blank -> null, explicit culture (E)
+    NumCols = {
+        "16A_Auth", "16A_Util", "06_Auth", "06_Util",
+        "17A_Auth", "17A_Util", "17B_Auth", "17B_Util",
+        "17O_Auth", "17O_Util", "16A_Reserve", "06_Reserve"
+    },
+    CastNum = Table.TransformColumns(TrimText,
+        List.Transform(NumCols, each
+            {_, (x) =>
+                if x = null or Text.Trim(Text.From(x)) = "" then null
+                else Number.From(Text.Trim(Text.From(x)), "en-US"),
+             type number})),
+
+    // 8. Drop helper key (FileCurrency stays)
+    Result = Table.RemoveColumns(CastNum, {"FileDateKey"})
+in
+    Result
