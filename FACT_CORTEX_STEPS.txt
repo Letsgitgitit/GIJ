@@ -1,0 +1,16 @@
+// FACT_CORTEX_STEPS.m — file currency from the file name + one-file-per-date guard.  BUILD 2026-10-22a
+// Insert into FACT_CORTEX right after the step that filters the folder to the GOLDEN_*.csv files.
+// Replace PreviousStep with that step's name; the step that followed it must now read from Checked.
+// Naming: GOLDEN_YYYYMMDD_EUR.csv = EUR; GOLDEN_YYYYMMDD.csv = USD.
+
+    AddCurrency = Table.AddColumn(
+        Table.AddColumn(PreviousStep, "FileDateKey", each Text.Middle([Name], 7, 8), type text),
+        "FileCurrency",
+        each if Text.EndsWith(Text.Upper([Name]), "_EUR.CSV") then "EUR" else "USD", type text),
+
+    // Guard: two files for one date (e.g. a USD and an EUR copy side by side) would double the day -> refresh fails.
+    DupDates = Table.SelectRows(
+        Table.Group(AddCurrency, {"FileDateKey"}, {{"n", each Table.RowCount(_), Int64.Type}}),
+        each [n] > 1),
+    Checked = if Table.RowCount(DupDates) = 0 then AddCurrency
+        else error Error.Record("CORTEX: two files for one date", Text.Combine(DupDates[FileDateKey], ", ")),
