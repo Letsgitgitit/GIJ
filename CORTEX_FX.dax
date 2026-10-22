@@ -1,0 +1,42 @@
+// CORTEX_FX.dax — BUILD 2026-10-22a
+// 1 calculated table + 1 relationship + 1 calculated column.
+
+// ============================================================ 1. Calculated table (Modeling > New table)
+DIM_FX_EURUSD =
+VAR t =
+    SELECTCOLUMNS (
+        FILTER ( FACT_RECONC,
+            FACT_RECONC[IsEnvelopeTotal]
+                && FACT_RECONC[CurrCode] = "USD"
+                && FACT_RECONC[AuthoEUR] >= 100000          // large limits only: ratio exact to 1e-7
+                && FACT_RECONC[AuthoOrigCcy] > 0 ),
+        "FxDate", FACT_RECONC[SnapshotDate],
+        "R", ROUND ( FACT_RECONC[AuthoOrigCcy] / FACT_RECONC[AuthoEUR], 4 ) )
+VAR g =
+    GROUPBY ( t, [FxDate],
+        "RateMin", MINX ( CURRENTGROUP (), [R] ),
+        "RateMax", MAXX ( CURRENTGROUP (), [R] ),
+        "RateAvg", AVERAGEX ( CURRENTGROUP (), [R] ),
+        "UsdLines", COUNTX ( CURRENTGROUP (), 1 ) )
+RETURN
+    ADDCOLUMNS ( g,
+        "EURUSD", IF ( [RateMin] = [RateMax], [RateMin], ROUND ( [RateAvg], 4 ) ),
+        "IsRateClean", [RateMin] = [RateMax] )               // FALSE -> listed by FX1
+
+// ============================================================ 2. Relationship (Model view)
+// FACT_CORTEX[SnapshotDate] (many) -> DIM_FX_EURUSD[FxDate] (one), single direction, active.
+
+// ============================================================ 3. Calculated column on FACT_CORTEX
+// EUR files: 1. USD files: 1 / rate of that date. Blank when no rate that date (never carried forward).
+FxToEUR =
+IF (
+    FACT_CORTEX[FileCurrency] = "EUR",
+    1,
+    VAR r = RELATED ( DIM_FX_EURUSD[EURUSD] )
+    RETURN IF ( NOT ISBLANK ( r ), DIVIDE ( 1, r ) )
+)
+
+// ============================================================ Measure pattern (one per amount, when needed)
+// CORTEX 16A Auth EUR = SUMX ( FACT_CORTEX, FACT_CORTEX[16A_Auth] * FACT_CORTEX[FxToEUR] )
+// CORTEX 16A Util EUR = SUMX ( FACT_CORTEX, FACT_CORTEX[16A_Util] * FACT_CORTEX[FxToEUR] )
+// (same for 06_Auth / 06_Util / 17A_* / 17B_* / 16A_Reserve / 06_Reserve)
