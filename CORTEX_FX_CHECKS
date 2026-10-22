@@ -1,0 +1,19 @@
+// CORTEX_FX_CHECKS.dax — BUILD 2026-10-22a. Run in DAX query view.
+
+// ============================================================ FX1: dates with more than one ratio (expect no rows)
+EVALUATE
+FILTER ( DIM_FX_EURUSD, NOT DIM_FX_EURUSD[IsRateClean] )
+ORDER BY DIM_FX_EURUSD[FxDate] DESC
+
+// ============================================================ FX2: CORTEX coverage per date
+// Expect NoRate = 0 on USD dates, Rate = 1 on EUR dates.
+EVALUATE
+SUMMARIZECOLUMNS (
+    FACT_CORTEX[SnapshotDate],
+    FACT_CORTEX[FileCurrency],
+    "Rows", COUNTROWS ( FACT_CORTEX ),
+    "EURUSD", MAXX ( FACT_CORTEX, RELATED ( DIM_FX_EURUSD[EURUSD] ) ),
+    "Rate", MAX ( FACT_CORTEX[FxToEUR] ),
+    "NoRate", COUNTROWS ( FILTER ( FACT_CORTEX, ISBLANK ( FACT_CORTEX[FxToEUR] ) ) ) + 0
+)
+ORDER BY FACT_CORTEX[SnapshotDate] DESC
